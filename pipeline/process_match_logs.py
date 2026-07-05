@@ -237,8 +237,11 @@ def main():
     player_profiles = {}
     csv_rows = []
     
-    for nation_key in ["spain_xi", "portugal_xi"]:
-        nation_name = "Spain" if nation_key == "spain_xi" else "Portugal"
+    xi_keys = [k for k in roster.keys() if k.endswith("_xi")]
+    for nation_key in xi_keys:
+        nation_name = nation_key[:-3].replace("_", " ").title()
+        if nation_name.lower() == "usa":
+            nation_name = "USA"
         player_profiles[nation_name] = []
         
         n_id = nation_ids.get(nation_name)

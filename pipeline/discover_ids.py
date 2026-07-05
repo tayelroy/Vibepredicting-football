@@ -16,7 +16,21 @@ LEAGUE_COMPETITIONS = {
     "Primeira Liga": "sr:competition:238",
     "Ligue 1": "sr:competition:34",
     "Saudi Pro League": "sr:competition:955",
-    "Serie A": "sr:competition:23"
+    "Serie A": "sr:competition:23",
+    "Bundesliga": "sr:competition:9",
+    "Eredivisie": "sr:competition:39",
+    "Championship": "sr:competition:18",
+    "Brasileirão": "sr:competition:325",
+    "Eliteserien": "sr:competition:116"
+}
+
+# Manual competitor club ID mappings for quick resolution and unsupported API leagues
+MANUAL_CLUB_IDS = {
+    "Zenit Saint Petersburg": "sr:competitor:1946",
+    "AZ Alkmaar": "sr:competitor:2956",
+    "Bodø/Glimt": "sr:competitor:2054",
+    "RB Leipzig": "sr:competitor:2807",
+    "Nottingham Forest": "sr:competitor:60"
 }
 
 # Strict mappings to prevent substring mismatch (e.g. Barcelona matching Espanyol Barcelona first)
@@ -35,11 +49,20 @@ MANUAL_CLUB_MATCHES = {
     "manchesterunited": "manchesterunited",
     "chelsea": "chelseafc",
     "juventus": "juventusturin",
-    "acmilan": "acmilan"
+    "acmilan": "acmilan",
+    "liverpool": "liverpoolfc",
+    "arsenal": "arsenalfc",
+    "sevilla": "sevillafc",
+    "torino": "torinofc",
+    "brentford": "brentfordfc",
+    "westbromwichalbion": "westbromwichalbion",
+    "fulham": "fulhamfc"
 }
 
 def normalize_name(s):
     s = s.lower()
+    # Handle Scandinavian characters that don't normalize with NFD
+    s = s.replace('ø', 'o').replace('æ', 'ae').replace('å', 'aa')
     s = "".join(c for c in unicodedata.normalize('NFD', s) if unicodedata.category(c) != 'Mn')
     s = re.sub(r'[^a-z0-9]', '', s)
     return s
@@ -57,6 +80,8 @@ def name_match(target_club, candidate_club):
 def player_name_match(name1, name2):
     def get_parts(s):
         s = s.lower()
+        # Handle Scandinavian characters in player names too
+        s = s.replace('ø', 'o').replace('æ', 'ae').replace('å', 'aa')
         s = "".join(c for c in unicodedata.normalize('NFD', s) if unicodedata.category(c) != 'Mn')
         parts = re.split(r'[\s,]+', s)
         return [p for p in parts if p]
@@ -77,6 +102,17 @@ def discover_club_ids(client, unique_clubs):
     print("\n--- Discovering Club IDs ---")
     club_ids = {}
     
+    # First apply manual club IDs
+    for target_club in unique_clubs:
+        if target_club in MANUAL_CLUB_IDS:
+            club_ids[target_club] = MANUAL_CLUB_IDS[target_club]
+            print(f"  Mapped Club (manual): {target_club} -> {MANUAL_CLUB_IDS[target_club]}")
+            
+    # Discover remaining clubs
+    remaining_clubs = [c for c in unique_clubs if c not in club_ids]
+    if not remaining_clubs:
+        return club_ids
+        
     for comp_name, comp_id in LEAGUE_COMPETITIONS.items():
         print(f"Checking league: {comp_name} ({comp_id})...")
         try:
@@ -103,7 +139,7 @@ def discover_club_ids(client, unique_clubs):
                 c_name = c.get("name", "")
                 c_id = c.get("id", "")
                 
-                for target_club in unique_clubs:
+                for target_club in remaining_clubs:
                     if target_club not in club_ids and name_match(target_club, c_name):
                         club_ids[target_club] = c_id
                         print(f"  Mapped Club: {target_club} -> {c_name} ({c_id})")
@@ -117,76 +153,105 @@ def discover_club_ids(client, unique_clubs):
                 
     return club_ids
 
-def get_national_team_ids(client):
+def get_national_team_ids(client, target_nations):
     print("\n--- Discovering National Team IDs ---")
     
-    # Spain and Portugal
-    targets = {"Spain": "ESP", "Portugal": "POR"}
+    # Target countries mapping
+    iso_codes = {
+        "Spain": "ESP", "Portugal": "POR", "Brazil": "BRA", "Norway": "NOR",
+        "France": "FRA", "England": "ENG", "Belgium": "BEL", "Germany": "GER",
+        "Argentina": "ARG", "Colombia": "COL", "USA": "USA", "Egypt": "EGY",
+        "Morocco": "MAR", "Mexico": "MEX", "Switzerland": "SUI"
+    }
+    targets = {nation: iso_codes.get(nation, "") for nation in target_nations}
     team_ids = {}
     
-    # Use UEFA Nations League (sr:competition:23755) to find them
-    unl_comp_id = "sr:competition:23755"
+    competitors = []
+    # Try World Cup first
     try:
-        seasons = client.competition_seasons(unl_comp_id).get("seasons", [])
-        if seasons:
-            season_id = seasons[0]["id"]
+        wc_seasons = client.competition_seasons("sr:competition:16").get("seasons", [])
+        if wc_seasons:
+            season_id = wc_seasons[0]["id"]
             sc_data = client.season_competitors(season_id)
-            competitors = sc_data.get("season_competitors", sc_data.get("competitors", []))
-            for c in competitors:
-                code = c.get("country_code", "").upper()
-                for nation, iso in targets.items():
-                    if code == iso or name_match(nation, c.get("name", "")):
-                        team_ids[nation] = c["id"]
-                        print(f"  Mapped Nation: {nation} -> {c.get('name')} ({c['id']})")
+            competitors.extend(sc_data.get("season_competitors", sc_data.get("competitors", [])))
     except Exception as e:
-        print(f"  Error mapping national teams: {e}")
-                        
+        print(f"  Error loading World Cup competitors: {e}")
+        
+    # Try Nations League as fallback
+    try:
+        unl_seasons = client.competition_seasons("sr:competition:23755").get("seasons", [])
+        if unl_seasons:
+            season_id = unl_seasons[0]["id"]
+            sc_data = client.season_competitors(season_id)
+            competitors.extend(sc_data.get("season_competitors", sc_data.get("competitors", [])))
+    except Exception as e:
+        print(f"  Error loading Nations League competitors: {e}")
+        
+    # Map target nations
+    for c in competitors:
+        c_name = c.get("name", "")
+        c_code = c.get("country_code", "").upper()
+        for nation, iso in targets.items():
+            if nation in team_ids:
+                continue
+            if (iso and c_code == iso) or name_match(nation, c_name):
+                team_ids[nation] = c["id"]
+                print(f"  Mapped Nation: {nation} -> {c_name} ({c['id']})")
+                
     return team_ids
 
 def discover_player_ids(client, roster, national_team_ids, club_ids):
     print("\n--- Discovering Player IDs ---")
     player_ids = {}
     
-    # 1. Scan national team lineups first (Spain and Portugal)
+    # 1. Scan national team lineups dynamically
     for nation, team_id in national_team_ids.items():
-        key = "spain_xi" if nation == "Spain" else "portugal_xi"
+        # Map back to roster key (e.g. Spain -> spain_xi)
+        key = f"{nation.lower().replace(' ', '_')}_xi"
         target_players = roster.get(key, [])
         
         print(f"Scanning match lineups for {nation}...")
-        summaries_data = client.competitor_summaries(team_id)
-        summaries = summaries_data.get("summaries", [])
-        
-        completed = [
-            s for s in summaries
-            if s.get("sport_event_status", {}).get("status") in ("closed", "ended")
-        ][:5] # Scan last 5 matches
-        
-        seen_players = {} # name -> id
-        for match in completed:
-            match_id = match.get("sport_event", {}).get("id", "")
-            if not match_id:
-                continue
-            try:
-                lineups_data = client.sport_event_lineups(match_id)
-                competitors = lineups_data.get("lineups", {}).get("competitors", [])
-                for comp in competitors:
-                    if comp.get("id") == team_id:
-                        for p in comp.get("players", []):
-                            seen_players[p.get("name")] = p.get("id")
-            except Exception as e:
-                print(f"  Error reading lineups for match {match_id}: {e}")
-                
-        # Match target players
-        for tp in target_players:
-            tp_name = tp["player_name"]
-            for s_name, s_id in seen_players.items():
-                if player_name_match(tp_name, s_name):
-                    player_ids[tp_name] = s_id
-                    print(f"  Mapped Player: {tp_name} -> {s_name} ({s_id})")
-                    break
+        try:
+            summaries_data = client.competitor_summaries(team_id)
+            summaries = summaries_data.get("summaries", [])
+            
+            completed = [
+                s for s in summaries
+                if s.get("sport_event_status", {}).get("status") in ("closed", "ended")
+            ][:5] # Scan last 5 matches
+            
+            seen_players = {} # name -> id
+            for match in completed:
+                match_id = match.get("sport_event", {}).get("id", "")
+                if not match_id:
+                    continue
+                try:
+                    lineups_data = client.sport_event_lineups(match_id)
+                    competitors = lineups_data.get("lineups", {}).get("competitors", [])
+                    for comp in competitors:
+                        if comp.get("id") == team_id:
+                            for p in comp.get("players", []):
+                                seen_players[p.get("name")] = p.get("id")
+                except Exception as e:
+                    print(f"  Error reading lineups for match {match_id}: {e}")
+                    
+            # Match target players
+            for tp in target_players:
+                tp_name = tp["player_name"]
+                for s_name, s_id in seen_players.items():
+                    if player_name_match(tp_name, s_name):
+                        player_ids[tp_name] = s_id
+                        print(f"  Mapped Player: {tp_name} -> {s_name} ({s_id})")
+                        break
+        except Exception as e:
+            print(f"  Error mapping via national team summaries for {nation}: {e}")
                     
     # 2. For any missing players, look them up in their club's player list
-    all_targets = roster.get("spain_xi", []) + roster.get("portugal_xi", [])
+    xi_keys = [k for k in roster.keys() if k.endswith("_xi")]
+    all_targets = []
+    for k in xi_keys:
+        all_targets.extend(roster[k])
+        
     missing_players = [p for p in all_targets if p["player_name"] not in player_ids]
     
     if missing_players:
@@ -253,8 +318,15 @@ def main():
         raise FileNotFoundError("roster.json not found.")
     roster = json.loads(roster_path.read_text())
     
+    # Get dynamic lineup keys
+    xi_keys = [k for k in roster.keys() if k.endswith("_xi")]
+    
+    # Gather target players
+    all_players = []
+    for k in xi_keys:
+        all_players.extend(roster[k])
+        
     # Get unique clubs
-    all_players = roster.get("spain_xi", []) + roster.get("portugal_xi", [])
     unique_clubs = sorted(list(set(p["club"] for p in all_players)))
     print(f"Unique clubs ({len(unique_clubs)}): {unique_clubs}")
     
@@ -262,7 +334,10 @@ def main():
     club_ids = discover_club_ids(client, unique_clubs)
     
     # Discover national team IDs
-    national_team_ids = get_national_team_ids(client)
+    target_nations = [k[:-3].replace("_", " ").title() for k in xi_keys]
+    target_nations = ["USA" if n.lower() == "usa" else n for n in target_nations]
+    
+    national_team_ids = get_national_team_ids(client, target_nations)
     
     # Discover player IDs
     player_ids = discover_player_ids(client, roster, national_team_ids, club_ids)
