@@ -121,16 +121,22 @@ def main():
         print("Error: roster.json or player_profiles.json missing. Run previous steps first.")
         return
         
-    spain_profile, spain_details = aggregate_team_profile(
-        "Spain", roster["spain_xi"], profiles.get("Spain", [])
-    )
+    xi_keys = [k for k in roster.keys() if k.endswith("_xi")]
+    team_profiles = []
+    details_map = {}
     
-    portugal_profile, portugal_details = aggregate_team_profile(
-        "Portugal", roster["portugal_xi"], profiles.get("Portugal", [])
-    )
-    
+    for key in xi_keys:
+        nation_name = key[:-3].replace("_", " ").title()
+        if nation_name.lower() == "usa":
+            nation_name = "USA"
+        profile, details = aggregate_team_profile(
+            nation_name, roster[key], profiles.get(nation_name, [])
+        )
+        team_profiles.append(profile)
+        details_map[nation_name] = details
+        
     # Save synthesized team profiles
-    df_teams = pd.DataFrame([spain_profile, portugal_profile])
+    df_teams = pd.DataFrame(team_profiles)
     output_dir = Path(__file__).parent.parent / "output"
     output_dir.mkdir(exist_ok=True)
     
@@ -140,10 +146,7 @@ def main():
     
     # Save details as JSON
     details_path = output_dir / "synthetic_aggregation_details.json"
-    details_path.write_text(json.dumps({
-        "Spain": spain_details,
-        "Portugal": portugal_details
-    }, indent=2, ensure_ascii=False))
+    details_path.write_text(json.dumps(details_map, indent=2, ensure_ascii=False))
     print(f"Saved detailed synthetic contributions to {details_path}")
 
 if __name__ == "__main__":
