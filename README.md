@@ -11,7 +11,8 @@ Powered by a two-stream data architecture, live commercial feeds from the **Spor
 
 Predicting international tournaments using historical national team data is inherently flawed due to massive time lags, tactical shifts, and sparse match samples. `vibepredicting-worldcup26` solves this by building national profiles from the ground up utilizing a **Targeted 1/11 Player Match Log Aggregation Pipeline**.
 
-<img width="5207" height="5505" alt="image" src="https://github.com/user-attachments/assets/af5dc2fe-abd4-4313-b669-1170dc1db839" />
+<img width="5207" height="5505" alt="image" src="https://github.com/user-attachments/assets/5ccd5145-c06a-4153-b4d8-ca9c69adaf3b" />
+
 
 
 ## ⚙️ Core Data Features & Proxies
