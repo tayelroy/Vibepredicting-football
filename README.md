@@ -24,12 +24,11 @@ The following diagram illustrates the ingestion, aggregation, and prediction pip
 
 ## Key Features
 
-* **Targeted 1/11 Player-Log Ingestion**: Isolates individual form over a rolling 8-match domestic window using a targeted request strategy to optimize API quota usage.
+* **Targeted 1/11 Player-Log Ingestion**: Isolates individual form over a rolling 18-match domestic window
 * **Decoupled Two-Stream Aggregation**: Sums pure additive metrics (non-penalty expected goals, threat creation) while distributing systemic team metrics (pressing intensity, defensive shot suppression) based on canonical positional weights.
 * **League Relativity Normalization**: Standardizes performance metrics across leagues using difficulty multipliers (e.g., Premier League = 1.0, Saudi Pro League = 0.60).
-* **Vectorized Dixon-Coles Solver**: Fits parameters via a high-performance vectorized log-likelihood function using SciPy optimization, reducing model training times to under 0.1 seconds.
+* **Vectorized Dixon-Coles Solver**: Fits parameters via a vectorized log-likelihood function using scipy.optimize.minimize.
 * **Dynamic Covariate Scaling**: Adjusts baseline attack and defense strengths log-linearly based on active player form before simulating scorelines.
-* **Automated Master Orchestrator**: Detects matchups from the lineup configuration, checks the training database validity, runs pipeline steps, and outputs serialized predictions.
 
 ---
 
@@ -45,7 +44,6 @@ To run this prediction engine, you must meet the following requirements:
 * `numpy` (Numerical operations)
 * `scipy` (Parameter optimization and probability distributions)
 * `requests` (API requests)
-* `python-dotenv` (Local environment management)
 
 ---
 
@@ -172,11 +170,23 @@ Saved prediction results to output/match_prediction.json
 * **`pipeline/build_intl_results.py`**: Fetches the historical match summaries for target nations to build the Dixon-Coles training corpus.
 * **`aggregation/aggregate_national_teams.py`**: Accumulates player profiles into national team metrics using additive (Stream A) and weighted (Stream B) channels.
 
-### Model Parametrization
-The prediction script uses the following hyperparameter settings:
-* **Time Decay Factor ($\xi$)**: `0.2`. Controls how heavily past matches are discounted over time (e.g., $w = e^{-\xi \times t}$).
-* **Attack Scaling ($\theta_a$)**: `0.15`. Log-linear adjustment scalar for the attacking form covariate.
-* **Defense Scaling ($\theta_d$)**: `0.04`. Log-linear adjustment scalar for the defensive shot-suppression covariate.
+### Model Parameters & Statistical Theory
+
+The predictive accuracy of this engine relies on bridging micro-level player statistics with macro-level team probabilities. The following parameters and statistical thresholds are explicitly calibrated to optimize the Dixon-Coles framework while managing API constraints:
+
+1. **The Covariate Scaling Factors ($\theta_a$ and $\theta_d$)**:
+   To prevent the synthesized player metrics from overwhelming the historical baseline of the national team, the Stream A (Attack) and Stream B (Defense) covariates are applied to the Poisson model using a log-linear scale.
+   * **Attack Scaling ($\theta_a$ = 0.15)**: Attacking actions (Expected Goals, Shot Volume) are inherently volatile and subject to high variance. We apply a heavier scalar of 0.15 to ensure that an extreme surge in a striker's domestic form aggressively influences the national team's expected goal output ($\lambda$).
+   * **Defense Scaling ($\theta_d$ = 0.04)**: Defensive metrics (Shot Suppression, PPDA) are systemic and highly stable. Because it takes more effort to shift a team's defensive structure, this scalar is kept low (0.04) to prevent heavily penalizing a national team just because one of their center-backs plays for a club that faces a high volume of shots.
+
+2. **Time Decay Factor ($\xi$ = 0.2)**:
+   International teams play sporadically, meaning a match from two years ago might feature a completely different manager and tactical setup. The engine applies an Exponential Time-Decay Weight ($w = e^{-\xi \times t}$) to historical results. A $\xi$ value of 0.2 applies a steep depreciation curve: recent matches carry maximum statistical weight, while fixtures older than 18 months are mathematically muted, ensuring the model reacts strictly to current team momentum.
+
+3. **Low-Score Correlation / Draw Bias ($\rho$)**:
+   A fundamental flaw in a standard Bivariate Poisson model is the assumption that Team A's goals and Team B's goals are completely independent. In real football, late-game psychology takes over; if a match is tied 0-0 or 1-1 in the 80th minute, teams become risk-averse. The engine utilizes the Dixon-Coles $\rho$ parameter (typically fitted around -0.20 to -0.30) to artificially adjust the probability matrix. It structurally inflates the likelihood of tight scorelines (0-0, 1-0, 0-1, 1-1) to accurately reflect real-world match management.
+
+4. **Player Form Stabilization (EWMA span of 15 matches)**:
+   While capturing immediate form is crucial, quantitative modeling dictates that attacking and defensive metrics require a minimum volume of data to separate true signal from variance (luck). The engine achieves this by processing all available matches chronologically and applying an Exponential Weighted Moving Average (EWMA) with a span of 15 matches. This specific threshold hits the mathematical "sweet spot" (representing a rolling 15-to-20 match window of roughly 1,350 to 1,800 minutes of pitch time). Because the Sportradar API delivers monolithic seasonal payloads, filtering matches locally in Python incurs zero additional API quota cost. This ensures the prediction is driven by crystallized, pre-tournament momentum (focusing heavily on the second half of the domestic season) rather than early-season tactical noise or small-sample anomalies.
 
 ---
 

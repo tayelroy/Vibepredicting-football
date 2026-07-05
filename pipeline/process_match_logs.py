@@ -13,10 +13,10 @@ def load_json(path):
         return None
     return json.loads(path.read_text())
 
-def calculate_player_average_form(client, player_id, club_id, nation_id, player_name, min_matches=8, min_minutes=15):
+def calculate_player_average_form(client, player_id, club_id, nation_id, player_name, min_matches=30, min_minutes=15, use_ewma=True, ewma_span=15):
     """
     Fetches the summaries for the player's club, finds the last 'min_matches' matches
-    where the player played at least 'min_minutes', and averages their per-90 stats.
+    where the player played at least 'min_minutes', and computes form (either raw mean or EWMA).
     Falls back to national team summaries if club summaries have no matches.
     """
     print(f"\nProcessing player: {player_name} ({player_id})")
@@ -108,7 +108,7 @@ def calculate_player_average_form(client, player_id, club_id, nation_id, player_
                     })
             return matches
         except Exception as e:
-            print(f"  ❌ Error reading summaries for {label}: {e}")
+            print(f" Error reading summaries for {label}: {e}")
             return []
             
     # Step A: Scan Club Summaries
@@ -117,20 +117,25 @@ def calculate_player_average_form(client, player_id, club_id, nation_id, player_
         
     # Step B: Fallback to National Team Summaries if no club matches found
     if not player_match_stats and nation_id:
-        print(f"  ⚠️ No matches found in club summaries. Falling back to national team...")
+        print(f" No matches found in club summaries. Falling back to national team...")
         player_match_stats = scan_summaries(nation_id, "national team")
         
     if not player_match_stats:
-        print(f"  ❌ No matches found anywhere where {player_name} played at least {min_minutes} minutes.")
+        print(f" No matches found anywhere where {player_name} played at least {min_minutes} minutes.")
         return None
         
-    # Sort by date descending
-    player_match_stats = sorted(player_match_stats, key=lambda x: x["date"], reverse=True)
-    
-    # Keep the last 'min_matches' matches
-    target_matches = player_match_stats[:min_matches]
-    print(f"  Found {len(player_match_stats)} matches. Using {len(target_matches)} recent matches.")
-    
+    # Sort matches chronologically (oldest to newest) or descending based on EWMA setting
+    if use_ewma:
+        # EWMA decays older matches, so they must be in chronological order
+        player_match_stats = sorted(player_match_stats, key=lambda x: x["date"], reverse=False)
+        target_matches = player_match_stats
+        print(f"  Found {len(player_match_stats)} matches. Applying EWMA time-decay (span={ewma_span}) chronologically.")
+    else:
+        # Standard average uses descending order and slices the last min_matches
+        player_match_stats = sorted(player_match_stats, key=lambda x: x["date"], reverse=True)
+        target_matches = player_match_stats[:min_matches]
+        print(f"  Found {len(player_match_stats)} matches. Using {len(target_matches)} recent matches for raw average.")
+        
     # Accumulate per-90 rates
     all_metrics = []
     for m in target_matches:
@@ -175,9 +180,15 @@ def calculate_player_average_form(client, player_id, club_id, nation_id, player_
             "team_shots_on_target_conceded": m["team_shots_on_target_conceded"]
         })
         
-    # Calculate mean of per-90 metrics
+    # Calculate weighted average or raw mean
     df = pd.DataFrame(all_metrics)
-    mean_metrics = df.mean().to_dict()
+    if use_ewma:
+        # Apply exponential decay natively in pandas
+        # span=15 automatically configures the alpha for a 15-match rolling weight
+        df_ewm = df.ewm(span=ewma_span, adjust=False).mean()
+        mean_metrics = df_ewm.iloc[-1].to_dict()
+    else:
+        mean_metrics = df.mean().to_dict()
     
     # Structure the final profile
     profile = {
@@ -240,7 +251,7 @@ def main():
             c_id = club_ids.get(club)
             
             if not p_id:
-                print(f"⚠️ Missing player ID for {name}. Skipping.")
+                print(f"Missing player ID for {name}. Skipping.")
                 continue
                 
             profile = calculate_player_average_form(client, p_id, c_id, n_id, name)
