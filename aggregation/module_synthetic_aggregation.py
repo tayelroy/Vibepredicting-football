@@ -1,26 +1,37 @@
 """
 module_synthetic_aggregation.py
 ================================
-1/11 Minute-Weighted Club Aggregation Engine
+1/11 Club Aggregation Engine
 ---------------------------------------------
 Synthesizes a national team's tactical profile by aggregating the domestic
-club metrics of the 11 players in the starting lineup. Each player's
-contribution is weighted by four factors:
+club metrics of the 11 players in the starting lineup. 
 
-    Player_Contribution = Club_Metric * (
-        Positional_Weight * League_Coefficient * Minutes_Played_Pct * Usage_Rate_Pct
-    )
+The aggregation is split into two streams based on metric type:
+
+1. Additive Metrics (e.g., npxG, xT_Proxy)
+   These are player-specific per-90 rate stats obtained directly from the API.
+   Because they already isolate the player's individual contribution and usage,
+   they are simply scaled by the league's relative strength:
+   
+       Player_Contribution = Player_Metric_p90 * League_Coefficient
+
+2. Systemic Metrics (e.g., PPDA, Shot_Suppression)
+   These are team-level match averages (e.g., total shots conceded by the club).
+   We apportion credit to the player based on their positional responsibility,
+   and scale by the league strength:
+   
+       Player_Contribution = Team_Metric_Avg * Positional_Weight * League_Coefficient
+       (Note: Inverse metrics divide by League_Coefficient to punish weaker leagues)
 
 The 11 player contributions are then summed to produce a single synthetic
 metric row representing the national team.
 
-Note on PPDA directionality
-----------------------------
-PPDA (Passes Per Defensive Action) is an inverse metric — a lower value
-means MORE intense pressing. This module computes it using the same additive
-formula as all other metrics so it remains scale-consistent when fed into the
-Dixon-Coles feature matrix. The caller is responsible for inverting or
-normalising PPDA before fitting the model.
+Note on PPDA & Shot_Suppression directionality
+-----------------------------------------------
+PPDA (Passes Per Defensive Action) and Shot Suppression are inverse metrics — a lower 
+value means BETTER performance. The caller is responsible for correctly dividing by the 
+league coefficient (or inverting the metric) during accumulation so it remains 
+scale-consistent.
 
 Author: Vibepredicting-Football Engine
 """
@@ -273,8 +284,6 @@ def synthesize_team(
             - club              (str)   must match `club_name` in club_metrics_df
             - league            (str)   used to look up LEAGUE_COEFFICIENTS
             - role              (str)   player's primary role (canonical or aliased)
-            - minutes_played_pct (float) 0.0–1.0 share of possible minutes played
-            - usage_rate_pct    (float) 0.0–1.0 proportion of team actions involving player
 
     club_metrics_df : pd.DataFrame
         Must contain column `club_name` plus all five metric columns:
@@ -311,8 +320,6 @@ def synthesize_team(
         "club",
         "league",
         "role",
-        "minutes_played_pct",
-        "usage_rate_pct",
     }
     for i, player in enumerate(roster_json):
         missing = required_player_fields - set(player.keys())
@@ -345,8 +352,6 @@ def synthesize_team(
         p_club = player["club"]
         p_league = player["league"]
         p_role_raw = player["role"]
-        p_minutes_pct = float(player["minutes_played_pct"])
-        p_usage_pct = float(player["usage_rate_pct"])
 
         # Resolve role → canonical key
         p_role = _resolve_role(p_role_raw)
@@ -364,14 +369,11 @@ def synthesize_team(
 
         if verbose:
             logger.info(
-                "  %-22s | %-20s | %-18s | league_coeff=%.2f | "
-                "min_pct=%.2f | usage_pct=%.2f",
+                "  %-22s | %-20s | %-18s | league_coeff=%.2f",
                 p_name,
                 p_club,
                 p_role,
                 league_coeff,
-                p_minutes_pct,
-                p_usage_pct,
             )
 
         # Apply the formula for each metric
@@ -379,21 +381,18 @@ def synthesize_team(
             pos_weight = POSITIONAL_WEIGHTS[metric][p_role]
             club_value = club_metrics[metric]
 
-            contribution = club_value * (
-                pos_weight * league_coeff * p_minutes_pct * p_usage_pct
-            )
+            # Systemic inverse metrics
+            contribution = (club_value * pos_weight) / league_coeff
 
             team_totals[metric] += contribution
 
             if verbose and pos_weight > 0.0:
                 logger.info(
-                    "      %s: %.4f * (%.2f * %.2f * %.2f * %.2f) = %.5f",
+                    "      %s: (%.4f * %.2f) / %.2f = %.5f",
                     metric.ljust(20),
                     club_value,
                     pos_weight,
                     league_coeff,
-                    p_minutes_pct,
-                    p_usage_pct,
                     contribution,
                 )
 
