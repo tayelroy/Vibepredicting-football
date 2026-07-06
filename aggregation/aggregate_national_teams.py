@@ -64,16 +64,19 @@ def aggregate_team_profile(team_name, roster, player_profiles):
         team_shots_avg = profile["team_shots_conceded_average"]
         
         # --- Stream A: Additive Metrics ---
+        # Note: Additive metrics are already player-specific rate stats per 90
         npxG_contrib = npxG_p90 * league_coeff
         xT_contrib = xT_p90 * league_coeff
         deep_prog_contrib = deep_prog_p90 * league_coeff
         
         # --- Stream B: Systemic Metrics (Scaled by Positional Weights) ---
+        # Note: PPDA and Shot_Suppression are inverse metrics (lower is better).
+        # We divide by league_coeff so players in weaker leagues are mathematically penalized (higher value)
         ppda_weight = POSITIONAL_WEIGHTS["PPDA"].get(role, 0.0)
-        ppda_contrib = team_ppda_avg * ppda_weight * league_coeff
+        ppda_contrib = (team_ppda_avg * ppda_weight) / league_coeff
         
         shot_supp_weight = POSITIONAL_WEIGHTS["Shot_Suppression"].get(role, 0.0)
-        shot_supp_contrib = team_shots_avg * shot_supp_weight * league_coeff
+        shot_supp_contrib = (team_shots_avg * shot_supp_weight) / league_coeff
         
         # Accumulate
         team_npxG += npxG_contrib
