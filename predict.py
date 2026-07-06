@@ -67,7 +67,17 @@ def main():
         "defense": team2_row["Shot_Suppression"]
     }
     
-    print("\n--- Covariates (Synthesized Form) ---")
+    # Calculate means to mean-center the covariates (avoid double-counting baseline strength)
+    df_teams["attack_raw"] = df_teams["npxG"] + df_teams["xT_Proxy"] * 0.1
+    mean_attack = df_teams["attack_raw"].mean()
+    mean_defense = df_teams["Shot_Suppression"].mean()
+    
+    team1_covs["attack"] -= mean_attack
+    team1_covs["defense"] -= mean_defense
+    team2_covs["attack"] -= mean_attack
+    team2_covs["defense"] -= mean_defense
+    
+    print("\n--- Covariates (Synthesized Form - Mean Centered) ---")
     print(f"{team1_name}:    Attack Covariate = {team1_covs['attack']:.4f} | Defense Covariate = {team1_covs['defense']:.4f}")
     print(f"{team2_name}:    Attack Covariate = {team2_covs['attack']:.4f} | Defense Covariate = {team2_covs['defense']:.4f}")
     
