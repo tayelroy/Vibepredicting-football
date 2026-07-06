@@ -99,6 +99,20 @@ def main():
     print("      MATCH PREDICTION REPORT")
     print("==================================================")
     
+    # Calculate simple game-like scores (0-100)
+    def calculate_score(attack_cov, defense_cov):
+        att = min(max(int(80 + (attack_cov * 100)), 0), 100)
+        # Defense is inverted (lower covariate is better), so we subtract from baseline
+        dfn = min(max(int(80 - (defense_cov * 5)), 0), 100)
+        return att, dfn
+        
+    team1_att, team1_def = calculate_score(team1_covs['attack'], team1_covs['defense'])
+    team2_att, team2_def = calculate_score(team2_covs['attack'], team2_covs['defense'])
+    
+    print("\nTEAM RATINGS (0-100):")
+    print(f"  {team1_name}: Attack {team1_att}/100 | Defense {team1_def}/100")
+    print(f"  {team2_name}: Attack {team2_att}/100 | Defense {team2_def}/100")
+    
     print("\n1. BASELINE MODEL (Historical Results Only):")
     print(f"  Expected Goals: {team1_name} {baseline_pred['lambda']:.2f} - {baseline_pred['mu']:.2f} {team2_name}")
     print(f"  {team1_name} Win:      {baseline_pred['home_win']*100:.2f}%")
@@ -117,6 +131,10 @@ def main():
     pred_path = Path(__file__).parent / "output" / "match_prediction.json"
     # Save serializable part of prediction
     output_pred = {
+        "team_ratings": {
+            team1_name: {"attack": team1_att, "defense": team1_def},
+            team2_name: {"attack": team2_att, "defense": team2_def}
+        },
         "baseline": {
             "lambda": baseline_pred["lambda"],
             "mu": baseline_pred["mu"],
